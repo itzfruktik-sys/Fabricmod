@@ -10,26 +10,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Распаковка архива
+      - name: Распаковка и поиск файлов
         run: |
           unzip -o *.zip
-          for dir in */; do
-            if [ -f "${dir}build.gradle" ]; then
-              cp -rn "$dir"* . || true
+          if [ ! -f "build.gradle" ]; then
+            BG_PATH=$(find . -maxdepth 3 -name "build.gradle" | head -n 1)
+            if [ -n "$BG_PATH" ]; then
+              DIR=$(dirname "$BG_PATH")
+              echo "Найден проект в папке: $DIR"
+              cp -rn "$DIR"/* . || true
             fi
-          done
+          fi
 
       - name: Авто-исправление маппингов
         run: |
           python3 -c "
-          import re
-          with open('build.gradle', 'r') as f:
-              content = f.read()
-          new_content = re.sub(r'mappings\s+[\"'].*?[\"']', 'mappings \"net.fabricmc:intermediary:1.16.5:v2\"', content)
-          with open('build.gradle', 'w') as f:
-              f.write(new_content)
-          print('--- Маппинги заменены на Intermediary v2 ---')
-          " || true
+          import os, re
+          if os.path.exists('build.gradle'):
+              with open('build.gradle', 'r', encoding='utf-8', errors='ignore') as f:
+                  content = f.read()
+              new_content = re.sub(r'mappings\s+[\"'].*?[\"']', 'mappings \"net.fabricmc:intermediary:1.16.5:v2\"', content)
+              with open('build.gradle', 'w', encoding='utf-8') as f:
+                  f.write(new_content)
+              print('--- Маппинги заменены на Intermediary v2 ---')
+          else:
+              print('Предупреждение: build.gradle не найден в корне')
+          "
 
       - name: Установка Java 17
         uses: actions/setup-java@v4
