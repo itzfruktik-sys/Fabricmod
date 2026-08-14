@@ -10,61 +10,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Распаковка и авто-структурирование проекта
+      - name: Распаковка архива и подготовка
         run: |
           cat << 'EOF' > unpack.py
           import os, glob, zipfile, shutil
 
-          # 1. Распаковка архивов
+          # 1. Просто распаковываем архив как есть
           for z in set(glob.glob("*.zip") + glob.glob("**/*.zip", recursive=True)):
+              print(f"Распаковка {z}...")
               try:
                   with zipfile.ZipFile(z, "r") as zf:
                       zf.extractall(".")
-                  print(f"Распакован: {z}")
               except Exception as e:
-                  print(f"Ошибка zip: {e}")
+                  print(f"Ошибка распаковки: {e}")
 
-          # 2. Поиск директории с build.gradle и перенос всего содержимого в корень
-          target_dir = None
-          for root, dirs, files in os.walk("."):
-              if any(x in root.split(os.sep) for x in [".gradle", "build", ".github", ".git"]):
-                  continue
-              if "build.gradle" in files and root != ".":
-                  target_dir = root
-                  break
+          # 2. Если проект распаковался во вложенную папку — поднимаем в корень
+          if not os.path.exists("build.gradle"):
+              for root, dirs, files in os.walk("."):
+                  if "build.gradle" in files and root != ".":
+                      print(f"Переносим файлы из {root} в корень...")
+                      for item in os.listdir(root):
+                          shutil.move(os.path.join(root, item), os.path.join(".", item))
+                      break
 
-          if target_dir:
-              print(f"Перенос проекта из {target_dir} в корень...")
-              for item in os.listdir(target_dir):
-                  s = os.path.join(target_dir, item)
-                  d = os.path.join(".", item)
-                  if os.path.isdir(s):
-                      shutil.copytree(s, d, dirs_exist_ok=True)
-                  else:
-                      shutil.copy2(s, d)
-
-          # 3. Проверка и приведение структуры src к стандарту Gradle
-          if os.path.exists("src") and not os.path.exists("src/main"):
-              print("Исправление нестандартной структуры src...")
-              os.makedirs("src_temp/main/java", exist_ok=True)
-              for item in os.listdir("src"):
-                  shutil.move(os.path.join("src", item), os.path.join("src_temp/main/java", item))
-              shutil.rmtree("src")
-              shutil.move("src_temp", "src")
-
-          # 4. Очистка BOM-символов
+          # 3. Чистим только невидимые BOM-символы в конфигах (чтобы Gradle не ругался)
           for gfile in ["settings.gradle", "build.gradle"]:
               if os.path.exists(gfile):
                   with open(gfile, "r", encoding="utf-8-sig", errors="ignore") as f:
                       content = f.read().lstrip('\ufeff\u200b\x00')
                   with open(gfile, "w", encoding="utf-8") as f:
                       f.write(content)
-
-          print("\n--- Структура файлов перед сборкой ---")
-          for root, dirs, files in os.walk("."):
-              if any(x in root.split(os.sep) for x in [".gradle", "build", ".github", ".git"]):
-                  continue
-              print(root, files)
+                  print(f"Файл {gfile} очищен от BOM.")
           EOF
           python3 unpack.py
 
@@ -84,17 +60,17 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs='-Xmx4096m -XX:+UseG1GC'"
         run: gradle build -x test --stacktrace
 
-      - name: Проверка размера .jar файла
+      - name: Проверка размера .jar
         run: |
           JAR_FILE=$(find build/libs -name "*.jar" ! -name "*-sources.jar" ! -name "*-dev.jar" | head -n 1)
           if [ -z "$JAR_FILE" ]; then
-            echo "Ошибка: JAR файл не найден!"
+            echo "Ошибка: JAR не найден!"
             exit 1
           fi
           SIZE=$(stat -c%s "$JAR_FILE")
-          echo "Размер собранного файла: $SIZE байт"
+          echo "Размер собранного мода: $SIZE байт"
           if [ "$SIZE" -lt 10000 ]; then
-            echo "Ошибка: Собрался пустой JAR ($SIZE байт)! Исходный код src не был подхвачен."
+            echo "Ошибка: Собрался пустой файл ($SIZE байт)."
             exit 1
           fi
 
