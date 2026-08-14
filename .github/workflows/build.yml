@@ -10,60 +10,61 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Распаковка и поиск исходников (src)
+      - name: Распаковка и авто-структурирование проекта
         run: |
           cat << 'EOF' > unpack.py
           import os, glob, zipfile, shutil
 
-          # 1. Распаковка архива
+          # 1. Распаковка архивов
           for z in set(glob.glob("*.zip") + glob.glob("**/*.zip", recursive=True)):
               try:
                   with zipfile.ZipFile(z, "r") as zf:
                       zf.extractall(".")
+                  print(f"Распакован: {z}")
               except Exception as e:
-                  print(f"Zip warning: {e}")
+                  print(f"Ошибка zip: {e}")
 
-          # 2. Принудительный поиск и перенос папки src в корень
-          src_found = None
-          for root, dirs, files in os.walk("."):
-              if any(x in root.split(os.sep) for x in [".gradle", "build", ".github"]):
-                  continue
-              if "src" in dirs and root != ".":
-                  src_found = os.path.join(root, "src")
-                  break
-
-          if src_found:
-              print(f"Найдена папка с кодом: {src_found}")
-              if os.path.exists("./src") and src_found != "./src":
-                  shutil.rmtree("./src")
-              shutil.move(src_found, "./src")
-
-          # 3. Поиск build.gradle и сборка файлов конфига в корень
+          # 2. Поиск директории с build.gradle и перенос всего содержимого в корень
           target_dir = None
           for root, dirs, files in os.walk("."):
-              if any(x in root.split(os.sep) for x in [".gradle", "build", ".github"]):
+              if any(x in root.split(os.sep) for x in [".gradle", "build", ".github", ".git"]):
                   continue
               if "build.gradle" in files and root != ".":
                   target_dir = root
                   break
 
           if target_dir:
+              print(f"Перенос проекта из {target_dir} в корень...")
               for item in os.listdir(target_dir):
                   s = os.path.join(target_dir, item)
                   d = os.path.join(".", item)
-                  if item != "src" and not os.path.exists(d):
-                      if os.path.isdir(s):
-                          shutil.copytree(s, d, dirs_exist_ok=True)
-                      else:
-                          shutil.copy2(s, d)
+                  if os.path.isdir(s):
+                      shutil.copytree(s, d, dirs_exist_ok=True)
+                  else:
+                      shutil.copy2(s, d)
 
-          # 4. Чистка BOM-символов
+          # 3. Проверка и приведение структуры src к стандарту Gradle
+          if os.path.exists("src") and not os.path.exists("src/main"):
+              print("Исправление нестандартной структуры src...")
+              os.makedirs("src_temp/main/java", exist_ok=True)
+              for item in os.listdir("src"):
+                  shutil.move(os.path.join("src", item), os.path.join("src_temp/main/java", item))
+              shutil.rmtree("src")
+              shutil.move("src_temp", "src")
+
+          # 4. Очистка BOM-символов
           for gfile in ["settings.gradle", "build.gradle"]:
               if os.path.exists(gfile):
                   with open(gfile, "r", encoding="utf-8-sig", errors="ignore") as f:
                       content = f.read().lstrip('\ufeff\u200b\x00')
                   with open(gfile, "w", encoding="utf-8") as f:
                       f.write(content)
+
+          print("\n--- Структура файлов перед сборкой ---")
+          for root, dirs, files in os.walk("."):
+              if any(x in root.split(os.sep) for x in [".gradle", "build", ".github", ".git"]):
+                  continue
+              print(root, files)
           EOF
           python3 unpack.py
 
@@ -93,7 +94,7 @@ jobs:
           SIZE=$(stat -c%s "$JAR_FILE")
           echo "Размер собранного файла: $SIZE байт"
           if [ "$SIZE" -lt 10000 ]; then
-            echo "Ошибка: Собрался пустой JAR ($SIZE байт)! Исходный код src не был найден в архиве."
+            echo "Ошибка: Собрался пустой JAR ($SIZE байт)! Исходный код src не был подхвачен."
             exit 1
           fi
 
