@@ -10,12 +10,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Распаковка и подготовка
+      - name: Распаковка и поиск исходников (src)
         run: |
           cat << 'EOF' > unpack.py
           import os, glob, zipfile, shutil
 
-          # 1. Распаковка архивов
+          # 1. Распаковка архива
           for z in set(glob.glob("*.zip") + glob.glob("**/*.zip", recursive=True)):
               try:
                   with zipfile.ZipFile(z, "r") as zf:
@@ -23,7 +23,22 @@ jobs:
               except Exception as e:
                   print(f"Zip warning: {e}")
 
-          # 2. Поиск папки с build.gradle
+          # 2. Принудительный поиск и перенос папки src в корень
+          src_found = None
+          for root, dirs, files in os.walk("."):
+              if any(x in root.split(os.sep) for x in [".gradle", "build", ".github"]):
+                  continue
+              if "src" in dirs and root != ".":
+                  src_found = os.path.join(root, "src")
+                  break
+
+          if src_found:
+              print(f"Найдена папка с кодом: {src_found}")
+              if os.path.exists("./src") and src_found != "./src":
+                  shutil.rmtree("./src")
+              shutil.move(src_found, "./src")
+
+          # 3. Поиск build.gradle и сборка файлов конфига в корень
           target_dir = None
           for root, dirs, files in os.walk("."):
               if any(x in root.split(os.sep) for x in [".gradle", "build", ".github"]):
@@ -32,26 +47,23 @@ jobs:
                   target_dir = root
                   break
 
-          # 3. Полный перенос файлов со слиянием каталогов (src и ресурсы)
           if target_dir:
-              print(f"Переносим файлы из {target_dir} в корень...")
               for item in os.listdir(target_dir):
                   s = os.path.join(target_dir, item)
                   d = os.path.join(".", item)
-                  if os.path.isdir(s):
-                      shutil.copytree(s, d, dirs_exist_ok=True)
-                  else:
-                      shutil.copy2(s, d)
+                  if item != "src" and not os.path.exists(d):
+                      if os.path.isdir(s):
+                          shutil.copytree(s, d, dirs_exist_ok=True)
+                      else:
+                          shutil.copy2(s, d)
 
-          # 4. Очистка BOM-символов в конфигурациях
+          # 4. Чистка BOM-символов
           for gfile in ["settings.gradle", "build.gradle"]:
               if os.path.exists(gfile):
                   with open(gfile, "r", encoding="utf-8-sig", errors="ignore") as f:
-                      content = f.read()
-                  content = content.lstrip('\ufeff\u200b\x00')
+                      content = f.read().lstrip('\ufeff\u200b\x00')
                   with open(gfile, "w", encoding="utf-8") as f:
                       f.write(content)
-                  print(f"{gfile} очищен!")
           EOF
           python3 unpack.py
 
@@ -70,6 +82,20 @@ jobs:
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs='-Xmx4096m -XX:+UseG1GC'"
         run: gradle build -x test --stacktrace
+
+      - name: Проверка размера .jar файла
+        run: |
+          JAR_FILE=$(find build/libs -name "*.jar" ! -name "*-sources.jar" ! -name "*-dev.jar" | head -n 1)
+          if [ -z "$JAR_FILE" ]; then
+            echo "Ошибка: JAR файл не найден!"
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$JAR_FILE")
+          echo "Размер собранного файла: $SIZE байт"
+          if [ "$SIZE" -lt 10000 ]; then
+            echo "Ошибка: Собрался пустой JAR ($SIZE байт)! Исходный код src не был найден в архиве."
+            exit 1
+          fi
 
       - name: Выгрузка готового мода
         uses: actions/upload-artifact@v4
