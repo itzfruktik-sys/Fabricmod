@@ -10,16 +10,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Распаковка и поиск файлов
+      - name: Распаковка архива и поиск файлов
         run: |
           unzip -o *.zip
-          if [ ! -f "build.gradle" ]; then
-            BG_PATH=$(find . -maxdepth 3 -name "build.gradle" | head -n 1)
-            if [ -n "$BG_PATH" ]; then
-              DIR=$(dirname "$BG_PATH")
-              echo "Найден проект в папке: $DIR"
-              cp -rn "$DIR"/* . || true
-            fi
+          TARGET_DIR=$(dirname $(find . -mindepth 2 -name "build.gradle" | head -n 1))
+          if [ -n "$TARGET_DIR" ] && [ "$TARGET_DIR" != "." ]; then
+            echo "Перенос файлов из $TARGET_DIR в корень..."
+            cp -r "$TARGET_DIR"/* .
           fi
 
       - name: Авто-исправление маппингов
@@ -32,9 +29,7 @@ jobs:
               new_content = re.sub(r'mappings\s+[\"'].*?[\"']', 'mappings \"net.fabricmc:intermediary:1.16.5:v2\"', content)
               with open('build.gradle', 'w', encoding='utf-8') as f:
                   f.write(new_content)
-              print('--- Маппинги заменены на Intermediary v2 ---')
-          else:
-              print('Предупреждение: build.gradle не найден в корне')
+              print('--- Маппинги установлены на Intermediary v2 ---')
           "
 
       - name: Установка Java 17
@@ -43,8 +38,10 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Настройка Gradle
+      - name: Установка Gradle 7.6
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '7.6'
 
       - name: Сборка `.jar`
         run: |
