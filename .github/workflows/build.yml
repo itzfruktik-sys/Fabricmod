@@ -10,49 +10,41 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Распаковка архива и подготовка проекта
+      - name: Распаковка и подготовка
         run: |
-          python3 -c '
+          cat << 'EOF' > unpack.py
           import os, glob, zipfile, shutil, re
 
-          # 1. Распаковка всех .zip файлов
-          zip_files = glob.glob("*.zip") + glob.glob("**/*.zip", recursive=True)
-          for z in set(zip_files):
-              print(f"Распаковываем архив: {z}")
+          # 1. Распаковка архивов
+          for z in set(glob.glob("*.zip") + glob.glob("**/*.zip", recursive=True)):
               try:
                   with zipfile.ZipFile(z, "r") as zf:
                       zf.extractall(".")
               except Exception as e:
-                  print(f"Предупреждение при распаковке {z}: {e}")
+                  print(f"Zip warning: {e}")
 
-          # 2. Поиск build.gradle и перенос из вложенной папки в корень
-          target_dir = None
+          # 2. Перенос файлов в корень
           for root, dirs, files in os.walk("."):
-              if any(x in root.split(os.sep) for x in [".gradle", "build", ".github", "out"]):
+              if any(x in root.split(os.sep) for x in [".gradle", "build", ".github"]):
                   continue
               if "build.gradle" in files and root != ".":
-                  target_dir = root
+                  for item in os.listdir(root):
+                      src = os.path.join(root, item)
+                      dst = os.path.join(".", item)
+                      if not os.path.exists(dst):
+                          shutil.move(src, dst)
                   break
 
-          if target_dir:
-              print(f"Найден проект во вложенной папке: {target_dir}. Переносим в корень...")
-              for item in os.listdir(target_dir):
-                  src = os.path.join(target_dir, item)
-                  dst = os.path.join(".", item)
-                  if not os.path.exists(dst):
-                      shutil.move(src, dst)
-
-          # 3. Замена маппингов
+          # 3. Фикс маппингов
           if os.path.exists("build.gradle"):
               with open("build.gradle", "r", encoding="utf-8", errors="ignore") as f:
                   content = f.read()
-              new_content = re.sub(r"mappings\s+[\"'].*?[\"']", "mappings \"net.fabricmc:intermediary:1.16.5:v2\"", content)
+              new_content = re.sub(r'mappings\s+["\'].*?["\']', 'mappings "net.fabricmc:intermediary:1.16.5:v2"', content)
               with open("build.gradle", "w", encoding="utf-8") as f:
                   f.write(new_content)
-              print("Проверка build.gradle завершена.")
-          else:
-              print("ВНИМАНИЕ: build.gradle не найден!")
-          '
+              print("build.gradle успешно обновлён!")
+          EOF
+          python3 unpack.py
 
       - name: Установка Java 17
         uses: actions/setup-java@v4
@@ -60,7 +52,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Настройка Gradle
+      - name: Настройка Gradle 7.6
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '7.6'
@@ -69,12 +61,12 @@ jobs:
         run: |
           chmod +x gradlew || true
           if [ -f "./gradlew" ]; then
-            ./gradlew build --stacktrace
+            ./gradlew build
           else
-            gradle build --stacktrace
+            gradle build
           fi
 
-      - name: Выгрузка готового мода (Artifact)
+      - name: Выгрузка готового мода
         uses: actions/upload-artifact@v4
         with:
           name: ReallyVisuals-Mod
