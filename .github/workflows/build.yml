@@ -10,37 +10,77 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Распаковка архива и подготовка
+      - name: Распаковка и принудительное перемещение в корень
         run: |
           cat << 'EOF' > unpack.py
           import os, glob, zipfile, shutil
 
-          # 1. Просто распаковываем архив как есть
-          for z in set(glob.glob("*.zip") + glob.glob("**/*.zip", recursive=True)):
-              print(f"Распаковка {z}...")
+          print("=== 1. Поиск и распаковка ZIP архивов ===")
+          zip_files = glob.glob("*.zip") + glob.glob("**/*.zip", recursive=True)
+          for z in set(zip_files):
+              if ".gradle" in z or "build" in z:
+                  continue
+              print(f"Распаковываем архив: {z}")
               try:
                   with zipfile.ZipFile(z, "r") as zf:
-                      zf.extractall(".")
+                      zf.extractall("unpacked_temp")
+                  print("Успешно распаковано во временную папку unpacked_temp")
               except Exception as e:
-                  print(f"Ошибка распаковки: {e}")
+                  print(f"Ошибка распаковки {z}: {e}")
 
-          # 2. Если проект распаковался во вложенную папку — поднимаем в корень
-          if not os.path.exists("build.gradle"):
-              for root, dirs, files in os.walk("."):
-                  if "build.gradle" in files and root != ".":
-                      print(f"Переносим файлы из {root} в корень...")
-                      for item in os.listdir(root):
-                          shutil.move(os.path.join(root, item), os.path.join(".", item))
+          # Если архивы распаковались
+          if os.path.exists("unpacked_temp"):
+              root_src = "unpacked_temp"
+              for r, d, f in os.walk("unpacked_temp"):
+                  if "build.gradle" in f:
+                      root_src = r
+                      break
+              
+              print(f"Переносим проект из '{root_src}' в корень...")
+              for item in os.listdir(root_src):
+                  s = os.path.join(root_src, item)
+                  d = os.path.join(".", item)
+                  if os.path.isdir(s):
+                      if os.path.exists(d):
+                          shutil.rmtree(d)
+                      shutil.copytree(s, d)
+                  else:
+                      shutil.copy2(s, d)
+              shutil.rmtree("unpacked_temp")
+
+          # Если src все еще в подпапке — поднимем его в корень
+          if not os.path.exists("src"):
+              for r, dirs, files in os.walk("."):
+                  if any(x in r.split(os.sep) for x in [".gradle", "build", ".git"]):
+                      continue
+                  if "src" in dirs and r != ".":
+                      print(f"Найдена папка src в {r}, переносим все файлы в корень...")
+                      for item in os.listdir(r):
+                          s = os.path.join(r, item)
+                          d = os.path.join(".", item)
+                          if os.path.isdir(s):
+                              if os.path.exists(d):
+                                  shutil.rmtree(d)
+                              shutil.copytree(s, d)
+                          else:
+                              shutil.copy2(s, d)
                       break
 
-          # 3. Чистим только невидимые BOM-символы в конфигах (чтобы Gradle не ругался)
-          for gfile in ["settings.gradle", "build.gradle"]:
+          print("\n=== 2. Очистка файлов конфигурации от BOM ===")
+          for gfile in ["settings.gradle", "build.gradle", "gradle.properties"]:
               if os.path.exists(gfile):
                   with open(gfile, "r", encoding="utf-8-sig", errors="ignore") as f:
                       content = f.read().lstrip('\ufeff\u200b\x00')
                   with open(gfile, "w", encoding="utf-8") as f:
                       f.write(content)
-                  print(f"Файл {gfile} очищен от BOM.")
+
+          print("\n=== 3. Проверка содержимого папки src ===")
+          if os.path.exists("src"):
+              for root, dirs, files in os.walk("src"):
+                  print(root, files)
+          else:
+              print("ВНИМАНИЕ: Папка 'src' не найдена в корне!")
+
           EOF
           python3 unpack.py
 
